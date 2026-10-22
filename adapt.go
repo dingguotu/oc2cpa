@@ -84,6 +84,11 @@ func buildUpstreamRequest(ctx context.Context, payload []byte, requestedModel st
 	if !ok {
 		return nil, &ocError{Code: "invalid_request_error", Message: "Invalid JSON body", HTTPStatus: 400}
 	}
+	// The routed model wins over the id in the body: the host may hand over a
+	// model alias or a prefixed id, and the upstream only accepts its own names.
+	if requestedModel != "" {
+		root["model"] = requestedModel
+	}
 	messages, ok := root["messages"].([]any)
 	if !ok || len(messages) == 0 {
 		return nil, &ocError{Code: "invalid_request_error", Message: "messages must be a non-empty array", HTTPStatus: 400}

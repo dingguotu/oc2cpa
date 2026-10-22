@@ -120,13 +120,22 @@ func invalidateModelCache() {
 	modelCache = nil
 }
 
-// handleStaticModels answers model.static with the built-in catalog.
+// handleStaticModels answers model.static with the built-in catalog, except when
+// the host forces model prefixes. In that mode the host registers static models
+// verbatim while the per-auth catalog is published with the credential prefix,
+// so answering here would expose the same models twice and add unprefixed ids
+// that routing rejects. The catalog stays available through model.for_auth.
 func handleStaticModels(requestJSON []byte) pluginapi.ModelResponse {
 	var req pluginapi.StaticModelRequest
 	if len(requestJSON) > 0 {
 		_ = json.Unmarshal(requestJSON, &req)
 	}
 	noteHostProxy(req.Host)
+	noteHostAuthDir(req.Host.AuthDir)
+	bootstrapAuthOnce()
+	if req.Host.ForceModelPrefix {
+		return pluginapi.ModelResponse{Provider: providerName}
+	}
 	models := staticCatalog()
 	return pluginapi.ModelResponse{Provider: providerName, Models: filterExcluded(models, req.Host)}
 }
