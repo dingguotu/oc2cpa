@@ -51,7 +51,7 @@ func prepareUpstreamCall(requestJSON []byte) (*executorRequestWire, *upstreamReq
 	if wire.AuthID != "" {
 		view.Holder = wire.AuthID
 	}
-	built, err := buildUpstreamRequest(context.Background(), payload, wire.Model, view)
+	built, err := buildUpstreamRequest(context.Background(), payload, stripAuthPrefix(wire.Model, wire.ExecutorRequest), view)
 	if err != nil {
 		return nil, nil, err
 	}
