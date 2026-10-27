@@ -135,15 +135,23 @@ them as well. Set `usage_log: false` to silence the console lines.
 The plugin also exposes a small web dashboard through the CLIProxyAPI
 management surface:
 
-- Panel page: `/v0/resource/plugins/oc2cpa/panel` (aggregate cards for today
-  and the whole window, per-model token stats, and the recent request list,
-  auto-refreshing every 10 s).
+- Panel page: `/v0/resource/plugins/oc2cpa/panel` (filter bar with time
+  range / model / status, aggregate cards, per-model token stats, and the
+  recent request list, auto-refreshing every 10 s).
 - Data APIs: `GET /v0/management/plugins/oc2cpa/usage/summary` and
   `GET /v0/management/plugins/oc2cpa/usage/records?limit=100` (management
-  key required, the page asks for it once and stores it locally).
+  key required, the page asks for it once and stores it locally). Both
+  endpoints accept the same filter parameters:
+
+  | Parameter | Values | Default |
+  |---|---|---|
+  | `range` | `today` / `7d` / `30d` / `all` | `all` |
+  | `model` | exact model id or alias | any model |
+  | `status` | `ok` / `failed` / `all` | `all` |
+  | `limit` (records only) | number of newest matches | `100` |
 
 The panel statistics come from the plugin's in-memory window (the latest
-1000 requests since host start); durable totals stay in CLIProxyAPI's own
+5000 requests since host start); durable totals stay in CLIProxyAPI's own
 usage database. The registered resource also appears as an "OC2CPA"
 menu entry (with the OpenCode logo) in the management UI when the frontend
 supports plugin resources.

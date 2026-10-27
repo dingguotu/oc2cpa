@@ -9,6 +9,7 @@ package main
 import (
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -87,11 +88,11 @@ func handleManagementRoutes(requestJSON []byte) (managementRegistrationPayload, 
 	base := "/plugins/" + pluginRouteID
 	payload := managementRegistrationPayload{
 		Routes: []pluginManagementRoute{
-			{Method: http.MethodGet, Path: base + "/usage/summary", Description: "Aggregate request and token usage observed by this plugin process (all / today / per model)."},
-			{Method: http.MethodGet, Path: base + "/usage/records", Description: "Recent per-request records (model, latency, tokens, failure status). Query: limit (default 100, max window)."},
+			{Method: http.MethodGet, Path: base + "/usage/summary", Description: "Aggregate request and token usage observed by this plugin process. Query: range (today | 7d | 30d | all, default all), model (model id or alias), status (ok | failed | all)."},
+			{Method: http.MethodGet, Path: base + "/usage/records", Description: fmt.Sprintf("Per-request records (model, latency, tokens, failure status), newest matches first. Query: range, model, status as in /usage/summary; limit (default 100, max %d).", usageStoreCapacity)},
 		},
 		Resources: []pluginManagementResource{
-			{Path: "/panel", Menu: "OC2CPA", Description: "OC2CPA usage dashboard: request counts, token consumption, per-model stats and the recent request log."},
+			{Path: "/panel", Menu: "OC2CPA", Description: "OC2CPA usage dashboard: filterable request counts, token consumption, per-model stats and the recent request log."},
 		},
 	}
 	return payload, nil
@@ -150,7 +151,7 @@ func handleManagement(requestJSON []byte) (pluginapi.ManagementResponse, error) 
 	base := loadedManagementBasePath() + "/plugins/" + pluginRouteID
 	switch {
 	case method == http.MethodGet && path == base+"/usage/summary":
-		return mgmtJSONResponse(http.StatusOK, buildUsageSummary()), nil
+		return mgmtJSONResponse(http.StatusOK, buildUsageSummary(usageFilterFromQuery(req.Query))), nil
 	case method == http.MethodGet && path == base+"/usage/records":
 		limit := 100
 		if raw := strings.TrimSpace(req.Query.Get("limit")); raw != "" {
@@ -158,14 +159,7 @@ func handleManagement(requestJSON []byte) (pluginapi.ManagementResponse, error) 
 				limit = n
 			}
 		}
-		entries := snapshotUsageEntries()
-		if limit < len(entries) {
-			entries = entries[len(entries)-limit:]
-		}
-		return mgmtJSONResponse(http.StatusOK, usageRecordsResponse{
-			Records: entries,
-			Count:   len(entries),
-		}), nil
+		return mgmtJSONResponse(http.StatusOK, buildUsageRecords(usageFilterFromQuery(req.Query), limit)), nil
 	default:
 		return mgmtJSONResponse(http.StatusNotFound, map[string]string{
 			"error": "unknown management route: " + method + " " + path,

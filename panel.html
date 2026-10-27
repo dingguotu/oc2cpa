@@ -19,6 +19,13 @@
   h1 { font-size: 20px; margin: 0; }
   .sub { color: var(--muted); font-size: 12px; }
   .spacer { flex: 1; }
+  .filters { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 0 0 14px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--card); }
+  .seg button { border: none; border-radius: 0; padding: 6px 12px; background: transparent; }
+  .seg button.active { background: var(--accent); color: #fff; }
+  .filters select { font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px;
+                    background: var(--card); max-width: 300px; }
+  .filters .hint { color: var(--muted); font-size: 12px; }
   button { font: inherit; border: 1px solid var(--line); background: #fff; border-radius: 8px;
            padding: 6px 14px; cursor: pointer; }
   button:hover { border-color: var(--accent); color: var(--accent); }
@@ -64,6 +71,18 @@
   <div class="banner" id="banner"></div>
 
   <div id="content" style="display:none">
+    <div class="filters">
+      <div class="seg" id="seg-range">
+        <button type="button" data-range="today">今天</button>
+        <button type="button" data-range="7d">近7天</button>
+        <button type="button" data-range="30d">近30天</button>
+        <button type="button" data-range="all">全部</button>
+      </div>
+      <select id="f-model"><option value="">全部模型</option></select>
+      <label class="auto"><input type="checkbox" id="f-failed"> 仅看失败</label>
+      <span class="hint" id="filter-hint"></span>
+    </div>
+
     <div class="cards">
       <div class="card"><div class="k">请求总数</div><div class="v" id="c-req">–</div><div class="s" id="c-req-today">今日 –</div></div>
       <div class="card"><div class="k">成功率</div><div class="v" id="c-rate">–</div><div class="s" id="c-rate-today">今日 –</div></div>
@@ -107,6 +126,40 @@ const ENC_PREFIX = "enc::v1::";
 const SECRET_SALT = "cli-proxy-api-webui::secure-storage";
 const PANEL_STORE = "cli-proxy-auth";
 const SS_KEY = "oc2cpa-mgmt-key";
+const FILTERS_KEY = "oc2cpa-filters";
+const RANGE_LABELS = { today: "今天", "7d": "近7天", "30d": "近30天", all: "全部" };
+
+/* ---------- panel filters (session-persistent) ----------------------------
+   range: today | 7d | 30d | all; model: exact model/alias; failed: failures
+   only. All three are passed to the server-side filter on every request. */
+let filters = (function () {
+  try {
+    const s = JSON.parse(sessionStorage.getItem(FILTERS_KEY));
+    if (s && RANGE_LABELS[s.range]) return { range: s.range, model: String(s.model || ""), failed: !!s.failed };
+  } catch (e) {}
+  return { range: "today", model: "", failed: false };
+})();
+const saveFilters = () => { try { sessionStorage.setItem(FILTERS_KEY, JSON.stringify(filters)); } catch (e) {} };
+function filterQuery(extra) {
+  const p = new URLSearchParams();
+  p.set("range", filters.range);
+  if (filters.model) p.set("model", filters.model);
+  if (filters.failed) p.set("status", "failed");
+  for (const [k, v] of Object.entries(extra || {})) p.set(k, v);
+  const s = p.toString();
+  return s ? "?" + s : "";
+}
+function filterLabel() {
+  const parts = [RANGE_LABELS[filters.range] || filters.range];
+  if (filters.model) parts.push(filters.model);
+  if (filters.failed) parts.push("仅失败");
+  return parts.join(" · ");
+}
+function syncFilterUI() {
+  for (const btn of $('seg-range').children) btn.classList.toggle('active', btn.dataset.range === filters.range);
+  $('f-failed').checked = filters.failed;
+  $('f-model').value = filters.model;
+}
 
 function _enc(t){return new TextEncoder().encode(t)}
 function _dec(b){return new TextDecoder().decode(b)}
@@ -175,6 +228,18 @@ function bucketCards(b, suffix, t) {
   $('c-total' + suffix).textContent = shortNum(b.total_tokens);
   $('c-total-today').textContent = t;
 }
+function renderModelOptions(summary) {
+  const options = summary.model_options || [];
+  const sel = $('f-model');
+  sel.innerHTML = '<option value="">全部模型</option>' +
+    options.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join("");
+  if (filters.model && options.includes(filters.model)) {
+    sel.value = filters.model;
+  } else {
+    if (filters.model) { filters.model = ""; saveFilters(); }
+    sel.value = "";
+  }
+}
 function shortNum(n) {
   n = n ?? 0;
   if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
@@ -183,7 +248,11 @@ function shortNum(n) {
 }
 function render(summary, records) {
   $('content').style.display = '';
-  bucketCards(summary.all, "", "全部（本次进程）");
+  syncFilterUI();
+  renderModelOptions(summary);
+  const label = filterLabel();
+  bucketCards(summary.all, "", label + " · 本次进程内存");
+  $('filter-hint').textContent = "筛选命中 " + fmt(summary.all.requests) + " 次请求";
   $('gen-at').textContent = ("记录窗口 " + summary.records + "/" + summary.window_cap +
        " · 更新于 " + new Date().toLocaleTimeString());
   const mb = $('models').tBodies[0];
@@ -230,7 +299,10 @@ function banner(msg) {
 let timer = null;
 async function load() {
   try {
-    const [summary, records] = await Promise.all([api("/usage/summary"), api("/usage/records?limit=100")]);
+    const [summary, records] = await Promise.all([
+      api("/usage/summary" + filterQuery()),
+      api("/usage/records" + filterQuery({ limit: "100" })),
+    ]);
     banner(null);
     $('keyform').style.display = 'none';
     render(summary, records);
@@ -239,6 +311,23 @@ async function load() {
     banner("加载失败：" + e.message);
   }
 }
+$('seg-range').onclick = ev => {
+  const btn = ev.target.closest('button[data-range]');
+  if (!btn || btn.dataset.range === filters.range) return;
+  filters.range = btn.dataset.range;
+  saveFilters();
+  load();
+};
+$('f-model').onchange = ev => {
+  filters.model = ev.target.value;
+  saveFilters();
+  load();
+};
+$('f-failed').onchange = ev => {
+  filters.failed = ev.target.checked;
+  saveFilters();
+  load();
+};
 $('refresh').onclick = load;
 $('auto').onchange = () => {
   if (timer) { clearInterval(timer); timer = null; }
